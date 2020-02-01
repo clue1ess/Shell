@@ -6,6 +6,9 @@
 #define NUM_PROCESS 24
 #define NUM_COMMANDS_BUFF 128
 #define NUM_JOBS 24
+#define STOPPED 1
+#define COMPLETE 2
+#define RUNNING 3
 
 typedef struct command {
 	char cmd[LEN_COMMAND];
@@ -13,11 +16,11 @@ typedef struct command {
 }command;
 
 typedef struct jobs {
-	int mode;	//0 - fg and 1 - bg
 	command **args;
 	pid_t pid[NUM_PROCESS];
 	pid_t pgid;
 	int index;
+	int status; //1 -stopped 2 -done
 }jobs;
 
 
@@ -28,6 +31,5 @@ void getHistory();
 void shell();
 void handleSignal(int sig);
 void init();
-pid_t getPid(int mode);
 void deleteHistory(char **args);
 void deleteJobs(jobs **arr);	

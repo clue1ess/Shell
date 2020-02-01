@@ -1,3 +1,14 @@
+/*
+Features :  
+    1. Multi-piping  
+	2. I/O redirection  
+	3. Background Commands using &  
+	4. Handling Signals -> Ctrl+C and Ctrl+Z  
+	5. fg, bg  
+	6. Change directory -> cd  
+	7. History -> history  
+	8. Exit the shell -> exit    
+*/
 #include <stdio.h>
 #include "shell.h"
 #include <string.h>
@@ -8,35 +19,20 @@
 extern char *history[NUM_COMMANDS_BUFF];
 extern jobs **arr;
 int shellpid;
+extern sigset_t mask;
 
 void about() {
 	system("clear");
-	printf("\n\t\t	SHELL\n\n");
-	printf("------------------------------------------------\n\n");
-	printf("Features : \n1. Multi-piping\n");
-	printf("2. I/O redirection\n");
-	printf("3. Background Commands using &\n");
-	printf("4. Handling Signals -> Ctrl+C and Ctrl+Z\n");
-	printf("5. fg, bg\n");
-	printf("6. Change directory -> cd\n");
-	printf("7. History -> history\n");
-	//printf("8. Environment Variables -> export and unset\n");
-	printf("8. Exit the shell -> exit\n\n\n");
+	printf("\n\t\t\t	MYSHELL\n\n");
+	printf("\t\t--------------------------------------\n");
+	printf("\t\t-              Welcome!              -\n");
+	printf("\t\t--------------------------------------\n\n");
 }
 
 void shell() {
 	int l;
 	char str[SIZE], buff[128];
 	command **args;
-
-	struct sigaction action;
-  	action.sa_handler = handleSignal;
-  	action.sa_flags = SA_RESTART;
-
-	sigaction(SIGINT, &action, NULL);	//ctrl-c
-  	sigaction(SIGTSTP, &action, NULL);  //ctrl-z
-
-	init();		//initializing job structure
 
 	while(1) {
 		getcwd(buff, 128);
@@ -63,6 +59,7 @@ void shell() {
 		//printCommands(args);
 		executeCommands(args);
 		//break;
+		
 	}	
 	return;
 }
@@ -72,16 +69,20 @@ int main() {
 	
 	struct sigaction action;
   	action.sa_handler = handleSignal;
+  	action.sa_mask = mask;
+	sigemptyset(&action.sa_mask);
   	action.sa_flags = SA_RESTART;
 
   	sigaction(SIGINT, &action, NULL);	//ctrl-c
-  	sigaction(SIGTSTP, &action, NULL);  //ctrl-z
+  	sigaction(SIGTSTP, &action, NULL);  //ctrl-z*/
 
 	shellpid = getpid(); 		//get shell pid 
+	//printf("%d", shellpid);
 	about();					//printing screen
+	init();		//initializing job structure
 	shell();
 	deleteHistory(history);		//free history
-	deleteJobs(arr);			//free jobs
+	deleteJobs(arr);	//free jobs
 	return 0;
 }
 

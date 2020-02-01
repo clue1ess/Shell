@@ -16,19 +16,25 @@ int hist_index = 0;
 jobs **arr;
 extern int shellpid;
 int job_index = -1;
+jobs *fg;
+sigset_t mask;
+static int group_no = 7	;
 
 
 void init() {
+	int i;
 	arr = (jobs **)malloc(sizeof(jobs) * NUM_JOBS);
+	for(i = 0; i < NUM_JOBS; i++)
+		arr[i] = NULL;
+	job_index = -1;
+	//printf("%d\n", job_index);
+	fg = NULL;
 	return;
-}
-
-void deleteJobs(jobs **arr) {//incomplete
 }
 
 command **tokenizeString(char *str) {
 	command **args;
-	int i, j, l;
+	int i, j, l, k;
 	char *token;
 	if(hist_index == 0 || strcmp(str, history[hist_index-1])) {
 		history[hist_index++] = (char *)malloc(strlen(str) + 1);
@@ -44,7 +50,7 @@ command **tokenizeString(char *str) {
 	args[i]->arguments = NULL;
 	j = 0;
 	args[i]->arguments = (char **)malloc(sizeof(char *) * NUM_COMMANDS);
-	for(int k = 0; k < NUM_COMMANDS; k++)
+	for(k = 0; k < NUM_COMMANDS; k++)
 		args[i]->arguments[k] = NULL;
 	args[i]->arguments[j] = (char *)malloc(sizeof(char) * (strlen(args[i]->cmd) + 1));
 	strcpy(args[i]->arguments[j], args[i]->cmd);
@@ -71,7 +77,7 @@ command **tokenizeString(char *str) {
 			args[i] = (command *)malloc(sizeof(command));
 			strcpy(args[i]->cmd, token);
 			args[i]->arguments = (char **)malloc(sizeof(char *) * NUM_COMMANDS);
-			for(int k = 0; k < NUM_COMMANDS; k++)
+			for(k = 0; k < NUM_COMMANDS; k++)
 				args[i]->arguments[k] = NULL;
 			args[i]->arguments[j] = (char *)malloc(sizeof(char) * (strlen(args[i]->cmd) + 1));
 			strcpy(args[i]->arguments[j], args[i]->cmd);
@@ -129,17 +135,31 @@ pid_t getPgid() {
 }
 
 void handleSignal(int sig) {
+	
 	pid_t pgid, pid;
+	if(job_index == -1) {
+		sigprocmask(SIG_BLOCK, &mask, NULL);
+		return;
+	}
 	if(sig == SIGINT) {
+	//fprintf(stderr, "handle signal : %d %d\n", job_index, fg->pgid);
+
 		printf("\nTerminated using CTRL-C\n");
-		pid = getPid(2);
-		kill(pid, SIGTERM);
+		//pid = fg->pid[0];
+		pgid = fg->pgid;
+		free(arr[job_index]);
+		job_index--;
+		fg = NULL;
+		kill(-pgid, SIGINT);
+		//printf("%d",job_index);
 	}
 	else if(sig == SIGTSTP) {
 		printf("\nSuspended using CTRL-Z\n");
-		pid = getPid(1);
-		kill(pid, SIGSTOP);
-		//signal(SIGSTOP, SIG_DFL);
+		//pid = fg->pid[fg->index-1];
+		pgid = fg->pgid;
+		fg->status = STOPPED;
+		fg = NULL;
+		kill(-pgid, SIGSTOP);
 		shell();
 	} 
 	return;
@@ -147,8 +167,11 @@ void handleSignal(int sig) {
 
 void changeDir(command **args) {
 	char buff[128];
+	char *home_dir;
+	home_dir = getenv("HOME");
+	//printf("%s", home_dir);
 	if(!(args[0]->arguments[1])) {
-		chdir("/home/hp");
+		chdir(home_dir);
 		return;
 	}
 	if(!strcmp(args[0]->arguments[1], "/")) {
@@ -162,61 +185,136 @@ void changeDir(command **args) {
 	return;
 }
 
-pid_t getPid(int mode) {	//0 - fg, 1 - bg
-	arr[job_index]->mode = mode;
-	return arr[job_index]->pid[arr[job_index]->index];
+void printCmd(command **args) {
+	int i, j, l;
+	i = -1;
+	while(args[++i]) {
+		j = 0;
+		printf("%s ", args[i]->cmd);
+		if(!args[i]->arguments){
+			continue;
+		}
+		while(args[i]->arguments[j+1]) {
+			if(j == 0)
+				j++;
+			printf("%s ", args[i]->arguments[j]);	
+			j++;
+		}
+	}
+	return;
 }
 
-
 void noPipe(command **args, int length) {
-	int pid, fd = 0, background = 0, ret, i, k;
+	int pid, fd = 0, background = 0, ret, i, k, j, index, flag = 0;
 	int status;
-	char *str;
-	arr[job_index] = (jobs *)malloc(sizeof(jobs));
-	arr[job_index]->index = 0;
-	arr[job_index]->args = args;
-	arr[job_index]->mode = 0;
+	char *str, str2[20];
 
 	//printCommands(args);
+	
 	if(!(strcmp(args[length-1]->cmd, "&"))) {
 		background = 1;
 	}
 	if(!(strcmp(args[length-1]->cmd, "bg"))) {
+		free(arr[job_index]);
+			job_index--;
+		if(job_index == -1)
+			return;
 		str = args[0]->arguments[1];
 		if(!str) {
-			fprintf(stderr, "provide pid number\n");
-			return;
+			index = 1;
+			//	return;
 		}
-		else 
+		else {
 			str++;
-		pid = atoi(str);
+			index = atoi(str);
+		}
+		pid = arr[job_index-index+1]->pid[0];
+		arr[job_index-index+1]->status = RUNNING;
+		//printf("\n");
+		printCmd(arr[job_index-index+1]->args);
+		printf("  &\n");
+		//printf("\n");
 		kill(pid, SIGCONT);
 		shell();
 		return;
 	}
 	if(!(strcmp(args[length-1]->cmd, "fg"))) {
+		free(arr[job_index]);
+			job_index--;
+		if(job_index == -1)
+			return;
 		str = args[0]->arguments[1];
 		if(!str) {
-			fprintf(stderr, "provide pid number\n");
-			return;
+			index = 1;
+			//return;
 		}
-		else 
+		else {
 			str++;
-		pid = atoi(str);
-		kill(pid, SIGCONT);
-		signal(SIGTTOU, SIG_IGN);
-		tcsetpgrp(0, getpgid(pid));
-		signal(SIGTTOU, SIG_DFL);
-		waitpid(getpgid(pid), NULL, WUNTRACED);
-		signal(SIGTTOU, SIG_IGN);
-		tcsetpgrp(0, getpgid(shellpid));
-		signal(SIGTTOU, SIG_DFL);
+			index = atoi(str);
+		}
+		fg = arr[job_index-index+1];
+		//pid = fg->pid[fg->index-1];
+		printCmd(fg->args);
+		printf("\n");
+		//printf("%d %d \n", fg->pgid, fg->index);
+		//free(arr[job_index-index+1]);
+		//printf("\n");
+		background = 0;
+		kill(fg->pid[fg->index-1], SIGCONT);
+		tcsetpgrp(0, fg->pgid);
+		waitpid(fg->pid[index-1], &status, WUNTRACED);
+		tcsetpgrp(0,shellpid);
+		//shell();
 		return;
 	}
 
 	if(!(strcmp(args[length-1]->cmd, "jobs"))) {
-		if(job_index == -1)
-		for(k = 0; k < job_index; k++);
+		int k;
+		//fprintf(stderr, "%d\n", job_index);
+		free(arr[job_index]);
+			job_index--;
+		if(job_index == -1) {
+			return;
+		}
+		pid = waitpid(-1, NULL, WNOHANG);
+			if(pid > 0)	{
+				for(k = 0; k <= job_index; k++) {
+					//for(j = 0; j < index; j++) 
+						if(arr[k]->pid[0] == pid) {
+							arr[k]->status = COMPLETE;
+						}
+				}
+			}
+		for(k = 0; k <= job_index; k++) {
+
+			printf("%d\t", k+1);
+			switch(arr[job_index-k]->status) {
+				case 1:
+					printf("Stopped\t");
+					break;
+				case 2:
+					printf("Complete\t");
+					break;
+				case 3:
+					printf("Running\t");
+					break;
+				default:
+					printf("status unknown\t");
+					break;
+			}
+			printCmd(arr[job_index-k]->args);
+			printf("\n");
+			if(arr[k]->status == COMPLETE) {
+				free(arr[k]);
+				for(j = k; j < job_index; j++) {
+					arr[j] = arr[j+1];
+				}
+				arr[job_index] = NULL;
+				job_index--;
+				k--;
+			}
+		}
+		return;
 	}
 
 	pid = fork();
@@ -224,15 +322,13 @@ void noPipe(command **args, int length) {
 		perror("fork failed :");
 	}
 	else if(pid == 0) {
-		setpgrp();
-		//arr[job_index]->pid  = (pid_t *)malloc(sizeof(pid_t) * NUM_PROCESS);
-		arr[job_index]->pid[arr[job_index]->index] = getpid();
-		//fprintf(stderr, "child : %d\n", arr[job_index]->pid[arr[job_index]->index]);
-		arr[job_index]->pgid = getpgrp();
 
-		signal(SIGINT, SIG_DFL);
-        signal(SIGTSTP, SIG_DFL);
+		sigprocmask(SIG_UNBLOCK, &mask, NULL);
+		setpgid(0, arr[job_index]->pgid);
+		//arr[job_index]->pid[arr[job_index]->index++] = getpid();
+
 		if(args[1]) {
+			//printf("fjkbbk");
 			if(!strcmp(args[1]->cmd, ">")) {
 				//output redirection
 				close(1);
@@ -249,6 +345,7 @@ void noPipe(command **args, int length) {
 				
 			}
 		}
+		//fprintf(stderr, "child %d ", getpid());
 		ret = execvp(args[0]->cmd, args[0]->arguments);
 		if(ret == -1) {
 			perror("execvp failed :");
@@ -256,17 +353,26 @@ void noPipe(command **args, int length) {
 		}
 	}
 	else {
-		setpgid(pid, pid);
-		arr[job_index]->pid[arr[job_index]->index] = pid;
-		//fprintf(stderr, "child : %d %d\n", arr[job_index]->pid[arr[job_index]->index], getpid());
+		//printf("parent %d ", getpid());
+		sigprocmask(SIG_UNBLOCK, &mask, NULL);
+		setpgid(pid, arr[job_index]->pgid);
+		tcsetpgrp(0, arr[job_index]->pgid);
+		arr[job_index]->pid[arr[job_index]->index++] = pid;
 		if(!background) {
-			arr[job_index]->mode = 1;
-			wait(0);
-		}
-		else {
+			
+			arr[job_index]->status = RUNNING;
 			waitpid(pid,&status,0);
-			//fprintf(stderr, "%d\n",pid);	
-			//arr[job_index]->mode = 2;
+			if(WIFEXITED(status)) {
+				//fprintf(stderr, "parent : %d\n", job_index);
+				arr[job_index]->status = COMPLETE;
+				free(arr[job_index]);
+				arr[job_index] = NULL;
+				fg = NULL;
+				job_index--;
+				tcsetpgrp(0,shellpid);
+				
+			}
+			//wait(0);
 		}
 	}
 	return;
@@ -274,22 +380,20 @@ void noPipe(command **args, int length) {
 
 void withPipe(command **args, int i, int k) {
 	int j = 0;
-	int flag = 0, fd, background = 0, redirection = 0, ret;
+	int flag = 0, fd, background = 0, redirection = 0, ret, status;
 	int  pid,  pfd1[2], pfd2[2], n;
-	
-	arr[job_index] = (jobs *)malloc(sizeof(jobs));
-	arr[job_index]->index = -1;
-	arr[job_index]->args = args;
-	arr[job_index]->mode = 0;
+	//fprintf(stderr, "with pipe : %d %d\n", job_index, fg->pgid);
+	if(!(strcmp(args[i-1]->cmd, "&"))) {
+		//fprintf(stderr, "fhgkj");
+		background = 1;
+	}
+
 	n = k;
 	i = k;
 	i++;
+	//printCmd(args);
 
-	if(!(strcmp(args[i-1]->cmd, "&"))) {
-		background = 1;
-		arr[job_index]->mode = 1;
-	}
-
+	
 	j = -2;
 	while(i--) {
 			j = j + 2;
@@ -314,16 +418,13 @@ void withPipe(command **args, int i, int k) {
 			perror("fork failed :");
 		}
 		else if(pid == 0) {
-			setpgrp();
-		//arr[job_index]->pid  = (pid_t *)malloc(sizeof(pid_t) * NUM_PROCESS);
-		arr[job_index]->pid[++arr[job_index]->index] = getpid();
-		//fprintf(stderr, "child : %d\n", arr[job_index]->pid[arr[job_index]->index]);
-		arr[job_index]->pgid = getpgrp();
-
-		signal(SIGINT, SIG_DFL);
-        signal(SIGTSTP, SIG_DFL);
+			sigprocmask(SIG_UNBLOCK, &mask, NULL);
+			setpgid(0, arr[job_index]->pgid);
+			//arr[job_index]->pid[arr[job_index]->index++] = getpid();
+			
 			if(i == k) { //first
 				//fprintf(stderr, "%s\n", args[j]->cmd);
+				//arr[job_index]->pgid = getpgrp();
 				if(args[j+1]) {
 					if(!strcmp(args[j+1]->cmd, "<")) {
 						close(0);
@@ -404,9 +505,12 @@ void withPipe(command **args, int i, int k) {
 			
 		}
 		else {
-			setpgid(pid, pid);
-			arr[job_index]->pid[++arr[job_index]->index] = pid;
+				sigprocmask(SIG_UNBLOCK, &mask, NULL);
+				setpgid(pid, arr[job_index]->pgid);
+				
+			arr[job_index]->pid[arr[job_index]->index++] = pid;
 			if(i == k) { //first
+				tcsetpgrp(0, arr[job_index]->pgid);
 				close(pfd1[1]);
 			}
 			else if(i == 0) {	//last
@@ -437,8 +541,29 @@ void withPipe(command **args, int i, int k) {
 
 			}
 		//	fg_pid = getpid();
-			if(!background)
-				wait(0);
+			if(!background) {
+				arr[job_index]->status = RUNNING;
+				waitpid(pid,&status,0);
+				if(WIFSIGNALED(status)) {
+					//fprintf(stderr, "signal");
+					//exit(0);
+					break;	
+				}
+				else if(i == 0 && WIFEXITED(status)) {
+					//fprintf(stderr, "%d\n", job_index);
+				//fprintf(stderr, "parent : %d\n", job_index);
+
+					arr[job_index]->status = COMPLETE;
+					/*for(int g = 0; g < fg->index; g++)
+						printf("%d	", fg->pid[g]);
+					printf("pgid : %d\n", fg->pgid);*/
+					free(arr[job_index]);
+					arr[job_index] = NULL;
+					fg = NULL;
+					job_index--;
+					tcsetpgrp(0,shellpid);
+				}
+			}
 		}
 	}
 }
@@ -446,7 +571,19 @@ void withPipe(command **args, int i, int k) {
 void executeCommands(command **args) {
 	int i = 0, k = 0, j, n, flag = 0, l;
 	job_index++;
+	arr[job_index] = (jobs *)malloc(sizeof(jobs));
+	arr[job_index]->index = 0;
+	arr[job_index]->pgid = ++group_no;
+	arr[job_index]->args = args;
+	arr[job_index]->status = RUNNING;
+	fg = arr[job_index];
+	sigemptyset(&mask);//Generate an empty signal set in mask
+	//sigaddset(&mask, SIGCHLD);//add sigchld to blocked signal sets
+	sigaddset(&mask, SIGINT);//add sigint to blocked signal sets
+	sigaddset(&mask, SIGTSTP);//add sigstp to blocked signal sets
+	
 	if(!(strcmp(args[0]->cmd, "cd"))) {
+      	sigprocmask(SIG_BLOCK, &mask, NULL); /*Blocks the signal set  in order */
 		changeDir(args);
 		return;
 	}
@@ -516,6 +653,7 @@ void executeCommands(command **args) {
 			k++;
 		i++;
 	}
+
 	flag = i;
 	if(!k) {
 		noPipe(args, i);
@@ -524,6 +662,19 @@ void executeCommands(command **args) {
 	//printCommands(args);
 	withPipe(args, i, k);
 	
+}
+
+
+void deleteJobs(jobs **arr) {
+	int j;
+	if(job_index == -1) {
+		free(arr);
+		return;
+	}
+	for(j = 0; j <= job_index; j++)
+		free(arr[j]);
+	free(arr);
+	return;
 }
 
 
