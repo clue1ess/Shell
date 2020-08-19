@@ -9,6 +9,7 @@
 #define STOPPED 1
 #define COMPLETE 2
 #define RUNNING 3
+#define PATH_MAX 128
 
 typedef struct command {
 	char cmd[LEN_COMMAND];

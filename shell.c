@@ -19,6 +19,7 @@ int job_index = -1;
 jobs *fg;
 sigset_t mask;
 static int group_no = 7	;
+char prev_dir[PATH_MAX];
 
 
 void init() {
@@ -29,6 +30,7 @@ void init() {
 	job_index = -1;
 	//printf("%d\n", job_index);
 	fg = NULL;
+    getcwd(prev_dir,PATH_MAX);
 	return;
 }
 
@@ -90,7 +92,7 @@ command **tokenizeString(char *str) {
 			j++;
 		}
 	}
-	
+	//printCommands(args);
 	return args;
 }
 
@@ -127,6 +129,7 @@ void getHistory() {
 		printf("%s", history[l]);
 		printf("\n");
 	}
+	//printf("%d", hist_index);
 	return;
 }
 
@@ -166,22 +169,34 @@ void handleSignal(int sig) {
 }
 
 void changeDir(command **args) {
-	char buff[128];
+	char buff[PATH_MAX];
 	char *home_dir;
 	home_dir = getenv("HOME");
 	//printf("%s", home_dir);
-	if(!(args[0]->arguments[1])) {
-		chdir(home_dir);
+	if(!(args[0]->arguments[1]) || (!strcmp(args[0]->arguments[1], "~"))) {
+		getcwd(prev_dir, PATH_MAX);
+		if(chdir(home_dir) == -1)
+			perror("Error : ");
+		return;
+	}
+	if(!(args[0]->arguments[1]) || (!strcmp(args[0]->arguments[1], "-"))) {
+		//printf("%s\n%s\n", prev_dir, getcwd(buff, PATH_MAX));
+		if(chdir(prev_dir) == -1)
+			perror("Error : ");			
 		return;
 	}
 	if(!strcmp(args[0]->arguments[1], "/")) {
-		chdir(args[0]->arguments[1]);
+		getcwd(prev_dir, PATH_MAX);
+		if(chdir(args[0]->arguments[1]) == -1)
+			perror("Error : ");
 		return;
 	}
-	getcwd(buff, 128);
+	getcwd(buff, PATH_MAX);
 	strcat(buff, "/");
 	strcat(buff, args[0]->arguments[1]);
-	chdir(buff);
+	getcwd(prev_dir, PATH_MAX);
+	if(chdir(buff) == -1)
+		perror("Error : ");
 	return;
 }
 
@@ -205,9 +220,9 @@ void printCmd(command **args) {
 }
 
 void noPipe(command **args, int length) {
-	int pid, fd = 0, background = 0, ret, i, k, j, index, flag = 0;
+	int pid, fd = 0, background = 0, ret, i, k, j, index, flag = 0, x = 0;
 	int status;
-	char *str, str2[20];
+	char *str, str2[20], *temp;
 
 	//printCommands(args);
 	
@@ -244,6 +259,7 @@ void noPipe(command **args, int length) {
 		if(job_index == -1)
 			return;
 		str = args[0]->arguments[1];
+		printf("args: %s", str);
 		if(!str) {
 			index = 1;
 			//return;
@@ -252,6 +268,7 @@ void noPipe(command **args, int length) {
 			str++;
 			index = atoi(str);
 		}
+		printf("%d %d %d", index, job_index, job_index-index+1);
 		fg = arr[job_index-index+1];
 		//pid = fg->pid[fg->index-1];
 		printCmd(fg->args);
@@ -331,9 +348,20 @@ void noPipe(command **args, int length) {
 			//printf("fjkbbk");
 			if(!strcmp(args[1]->cmd, ">")) {
 				//output redirection
+				while(args[2]->arguments[x++]) {
+					if(!strcmp(args[2]->arguments[x-1], "2>&1")) {
+						x = -1;
+						break;
+					}
+				}
 				close(1);
 				fd = open(args[2]->cmd,  O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR 
 				| S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+				if(x == -1) {
+					close(2);
+					fd = open(args[2]->cmd,  O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR 
+					| S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+				}
 
 			}
 			else if(!strcmp(args[1]->cmd, "<")) {
@@ -343,6 +371,14 @@ void noPipe(command **args, int length) {
 				| S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
 				
 				
+			}
+			if(!strcmp(args[1]->cmd, "2>")) {
+				//error redirection
+				printf("%s", args[1]->arguments[0]);
+				close(2);
+				fd = open(args[1]->arguments[0],  O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR 
+				| S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+
 			}
 		}
 		//fprintf(stderr, "child %d ", getpid());
@@ -568,8 +604,31 @@ void withPipe(command **args, int i, int k) {
 	}
 }
 
+void getCommand(command ***arg, int i, int num) {
+	int l = 0;
+	command **temp, **args;
+	args = *arg;
+	if(args[i]->arguments) {
+		while(args[i]->arguments[l]) {
+			free(args[i]->arguments[l]);
+			l++;
+		}
+		free(args[i]->arguments);
+	}
+	free(args[i]->cmd);
+	free(history[hist_index--]);
+	//printf("%s\n", history[hist_index-1-num]);
+	temp = tokenizeString(history[hist_index-1-num]);
+	*arg = temp;
+	//printCommands(*arg);
+	//args[i] = temp[0];
+	return;
+
+}
+
 void executeCommands(command **args) {
-	int i = 0, k = 0, j, n, flag = 0, l;
+	int i = 0, k = 0, j, n, flag = 0, l, index, num = 0;
+	char *temp;
 	job_index++;
 	arr[job_index] = (jobs *)malloc(sizeof(jobs));
 	arr[job_index]->index = 0;
@@ -591,6 +650,7 @@ void executeCommands(command **args) {
 	
 	i = 0;
 	while(args[i]) {
+		//printf("%s\n", args[i]->cmd);
 		if(!(strcmp(args[i]->cmd, ">"))) { //output
 			i = i + 2;
 			while(args[i]) {
@@ -644,6 +704,67 @@ void executeCommands(command **args) {
 				args[i++] = NULL;
 			break;
 		}
+		else if(args[i]->cmd[0] == '!' && args[i]->cmd[1] == '!') {  //history
+			args[i]->cmd[0] = '0';
+			args[i]->cmd[1] = '0';
+			num = atoi(args[i]->cmd);
+			//printf("%d\n", num);
+			if(num < hist_index && num >= 0)
+				getCommand(&args, i, num);
+			//printCommands(args);
+			executeCommands(args);
+			return;
+			//break;
+		}
+		else if(args[i]->arguments) { //error redirection
+			j = 0;
+			index = -1;
+			while(args[i]->arguments[j]) {
+				temp = args[i]->arguments[j];
+				if(temp[0] == '2' && temp[1] == '>') {
+					index = j;
+					break;
+				}
+				j = j + 1;
+			}
+			if(index != -1) {
+				while(args[i]->arguments[++j])
+					free(args[i]->arguments[j]); 
+				//printf("entry");
+				args[i+1] = (command *)malloc(sizeof(command));
+				strcpy(args[i+1]->cmd, "2>");
+				args[i+1]->arguments = (char **)malloc(sizeof(char *) * NUM_COMMANDS);
+				for(k = 0; k < NUM_COMMANDS; k++)
+					args[i+1]->arguments[k] = NULL;
+				args[i+1]->arguments[0] = (char *)malloc(sizeof(char) * (strlen(temp) - 1));
+				temp += 2;
+				strcpy(args[i+1]->arguments[0], temp);
+				free(args[i+1]->arguments[index]);
+				args[i]->arguments[index] = NULL;
+				//args[i]->arguments[0] += 2;
+				
+				i = i + 2;	
+				while(args[i]) {
+					j = 0;
+					free(args[i]->cmd);
+					if(!args[i]->arguments){
+						args[i] = NULL;
+						i++;
+						continue;
+					}
+					while(args[i]->arguments[j]) {
+						free(args[i]->arguments[j]);
+						j++;
+					}
+					free(args[i]->arguments);
+					args[i] = NULL;
+					i++;
+				}
+
+				break;
+			}
+		}
+		
 		i++;
 	}
 	i = 0;
@@ -656,6 +777,7 @@ void executeCommands(command **args) {
 
 	flag = i;
 	if(!k) {
+		//printCommands(args);
 		noPipe(args, i);
 		return;	
 	}
@@ -677,6 +799,27 @@ void deleteJobs(jobs **arr) {
 	return;
 }
 
+/*char *autocomplete(char *str, int *size) {
+	char *token, *req, buff[128];
+	command **args;
+	printf("fkv");
+	if(str[(*size)-1] == ' ') {
+		strcpy(buff, "ls -a");
+		args = tokenizeString(str);
+		executeCommands(args);
+		getcwd(buff, 128);
+		printf("gouri@prompt:%s$ ", buff);
+		printf("%s", str);
+	}
+	token = strtok(str, " ");
+	req = token;
+	while(!token) {
+		req = token;
+		token = strtok(NULL, " ");
+	}
+
+
+}*/
 
 
 

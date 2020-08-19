@@ -20,6 +20,24 @@ extern char *history[NUM_COMMANDS_BUFF];
 extern jobs **arr;
 int shellpid;
 extern sigset_t mask;
+char str[SIZE];
+
+/*void get_input(char *str) {
+	char c;
+	int i = 0;
+	do {
+		c = getchar();
+		if (c == '\t') {
+			printf("fjhjk");
+			str = autocomplete(str, &i);
+		}
+		else {
+			str[i++] = c;
+		}
+
+	} while (c != '\n' && c!='\r');
+	str[i] = '\0';
+}*/
 
 void about() {
 	system("clear");
@@ -31,13 +49,14 @@ void about() {
 
 void shell() {
 	int l;
-	char str[SIZE], buff[128];
+	char buff[128];
 	command **args;
 
 	while(1) {
 		getcwd(buff, 128);
 		printf("gouri@prompt:%s$ ", buff);
 		fgets(str, SIZE, stdin);
+		//get_input(str);
 		l = strlen(str);
 		str[l-1] = '\0';
 		if(!strcmp(str, "\0"))
